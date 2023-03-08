@@ -1,0 +1,18 @@
+{
+  "name": "iacclr",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "Riccardo Balbo",
+  "type": "module",
+  "license": "BSD3",
+  "dependencies": {
+    "express": "^4.18.2",
+    "minio": "^7.0.32",
+    "node-fetch": "^3.3.0",
+    "sharp": "^0.31.3"
+  }
+}

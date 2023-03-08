@@ -1,0 +1,13 @@
+{
+    "S3":"",
+    "S3_PUBLIC":"",
+    "LOSSLESS":false,
+    "NEAR_LOSSLESS":true,
+    "SMART_SUBSAMPLE":true,
+    "QUALITY": 80,
+    "MAX_WIDTH": 1920,
+    "MAX_HEIGHT": 1920,
+    "URL_WHITELIST":[
+
+    ]
+}
