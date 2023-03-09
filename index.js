@@ -46,7 +46,7 @@ function getMinio(){
     const [hostPortRegion,bucket]=hostPortRegionBucket.split("/");
     const [hostPort,region]=hostPortRegion.split("#");
     const [host,port]=hostPort.split(":");
-    if(!port||!host||!user||!password||!bucket||!region)throw "Invalid S3 path. Expected http[s]://user:password@host:port/bucket!region";
+    if(!port||!host||!user||!password||!bucket||!region)throw "Invalid S3 path. Expected http[s]://user:password@host:port#region/bucket";
     return [bucket,new Minio.Client({
         endPoint: host,
         port: parseInt(port),
@@ -109,15 +109,15 @@ async function getCache(hash){
 
 
 app.get("/", async (req, res) => {
-    const searchParam=new URL(req.url,`https://${req.headers.host}`).searchParams;
-    const url = searchParam.get("i");
+    const searchParams=new URL(req.url,`https://${req.headers.host}`).searchParams;
+    const originUrl = searchParams.get("i");
     
-    if(!url){
+    if(!originUrl){
         res.status(400).send("Missing url");
         return;
     }
 
-    if(!URL_WHITELIST.some(regex=>regex.test(url))){ // we don't want to open this to the whole internet
+    if(!URL_WHITELIST.some(regex=>regex.test(originUrl))){ // we don't want to open this to the whole internet
         res.status(403).send("Forbidden");
         return;
     }
@@ -128,23 +128,27 @@ app.get("/", async (req, res) => {
         req.headers["x-real-ip"] ||
         req.socket.remoteAddress;
 
-    const urlHash=Crypto.createHash("sha256").update(url).digest("hex");
+    const cleanUrl=new URL(originUrl);
+    cleanUrl.searchParams.delete("noCache");
+    console.log("Hash",cleanUrl.toString());
+    
+    const urlHash=Crypto.createHash("sha256").update(cleanUrl.toString()).digest("hex");
 
     // check if already cached
     let outStream=await getCache(urlHash);
 
     if(!outStream){        
-        console.log("Fetch",url);
-        const response = await fetch(url,{
+        console.log("Fetch",originUrl);
+        const response = await fetch(originUrl,{
             headers:{
                 "User-Agent": req.headers["user-agent"],
                 "X-Forwarded-For": ip // not a security feature, this is just to make the origin server know the advertised ip of the client            
             }
         });
-        console.log("Done fetch",url);
+        console.log("Done fetch",originUrl);
 
         // convert
-        console.log("Convert to WEBP",url);
+        console.log("Convert to WEBP",originUrl);
         const arrayBuffer = await response.arrayBuffer();
         const buffer=Buffer.from(arrayBuffer);
         const maxWidth=CONFIG.MAX_WIDTH||1920;
@@ -161,19 +165,19 @@ app.get("/", async (req, res) => {
             nearLossless: CONFIG.NEAR_LOSSLESS||true,
             smartSubsample: CONFIG.SMART_SUBSAMPLE||true
         }).toBuffer();
-        console.log("Done convert to WEBP",url);
+        console.log("Done convert to WEBP",originUrl);
 
         // cache
-        console.log("Cache",url);
+        console.log("Cache",originUrl);
         setCache(urlHash,image); 
-        console.log("Done cache",url);
+        console.log("Done cache",originUrl);
         
         // create stream
         outStream= Readable.from(Buffer.from(image));
     }
 
     // send
-    console.log("Send converted",url);
+    console.log("Send converted",originUrl);
     res.set("Content-Type", "image/webp");
     res.set("Cache-Control", "max-age=31536000"); //  cache for 1 year, we actually just want something big here. Upstream will handle the real cache   
     outStream.pipe(res);
