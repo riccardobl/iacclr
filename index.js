@@ -158,20 +158,50 @@ async function handle(req,res,body={}){
         const lossless=Boolean(body.lossless||CONFIG.LOSSLESS||false);
         const nearLossless=Boolean(body.nearLossless||CONFIG.NEAR_LOSSLESS||false);
         const smartSubsample=Boolean(body.smartSubsample||CONFIG.SMART_SUBSAMPLE||true);
-        const alphaQuality=parseInt(body.alphaQuality||CONFIG.ALPHA_QUALITY||0);
+        let alphaQuality=parseInt(body.alphaQuality||CONFIG.ALPHA_QUALITY||-1); // -1 = auto
         const effort=6;
 
-        const image=await Sharp(buffer).resize({
+        let image=await Sharp(buffer).resize({
             width: maxWidth,
             height: maxHeight,
             fit: "inside",
             withoutEnlargement: true
-        }).webp({
+        });
+
+        if(alphaQuality==-1){
+            const metadata=await image.metadata();
+            
+            let hasAlpha=false;
+            // check if metadata has alpha
+            if(!hasAlpha){
+                hasAlpha=metadata.hasAlpha;     
+            }
+            
+            // check if at least one pixel has alpha != 255
+            if(hasAlpha){
+                hasAlpha=false;
+                // extract channel without modifying the image
+                const alphaChannel=await image.clone().extractChannel("alpha").toBuffer();
+                const alphaBuffer=new Uint8Array(alphaChannel);
+                for(let i=0;i<alphaBuffer.length;i++){
+                    if(alphaBuffer[i]!=255){
+                        hasAlpha=true;
+                        break;
+                    }
+                }
+
+                if(!hasAlpha){
+                    image=await image.removeAlpha();
+                }
+            }
+        }
+        
+        image=await image.webp({
             quality: quality,
             lossless: lossless,
             nearLossless:nearLossless,
             smartSubsample: smartSubsample,
-            alphaQuality:alphaQuality,
+            alphaQuality:100,
             effort:effort
         }).toBuffer();
         console.log("Done convert to WEBP",originUrl);
