@@ -159,7 +159,7 @@ async function handle(req,res,body={}){
         const nearLossless=Boolean(body.nearLossless||CONFIG.NEAR_LOSSLESS||false);
         const smartSubsample=Boolean(body.smartSubsample||CONFIG.SMART_SUBSAMPLE||true);
         let alphaQuality=parseInt(body.alphaQuality||CONFIG.ALPHA_QUALITY||-1); // -1 = auto
-        const effort=6;
+        const effort=4;
 
         let image=await Sharp(buffer).resize({
             width: maxWidth,
