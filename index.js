@@ -59,6 +59,7 @@ function getMinio(){
 
 
 const app = Express();
+app.use(Express.json());
 
 async function setCache(hash,buffer){
     try{
@@ -108,7 +109,7 @@ async function getCache(hash){
 }
 
 
-app.get("/", async (req, res) => {
+async function handle(req,res,body={}){
     const searchParams=new URL(req.url,`https://${req.headers.host}`).searchParams;
     const originUrl = searchParams.get("i");
     
@@ -151,8 +152,14 @@ app.get("/", async (req, res) => {
         console.log("Convert to WEBP",originUrl);
         const arrayBuffer = await response.arrayBuffer();
         const buffer=Buffer.from(arrayBuffer);
-        const maxWidth=CONFIG.MAX_WIDTH||1920;
-        const maxHeight=CONFIG.MAX_HEIGHT||1920;
+        const maxWidth=parseInt(body.maxWidth||CONFIG.MAX_WIDTH||1920);
+        const maxHeight=parseInt(body.maxHeight||CONFIG.MAX_HEIGHT||1920);
+        const quality=parseInt(body.quality||CONFIG.QUALITY||80);
+        const lossless=Boolean(body.lossless||CONFIG.LOSSLESS||false);
+        const nearLossless=Boolean(body.nearLossless||CONFIG.NEAR_LOSSLESS||false);
+        const smartSubsample=Boolean(body.smartSubsample||CONFIG.SMART_SUBSAMPLE||true);
+        const alphaQuality=parseInt(body.alphaQuality||CONFIG.ALPHA_QUALITY||0);
+        const effort=6;
 
         const image=await Sharp(buffer).resize({
             width: maxWidth,
@@ -160,10 +167,12 @@ app.get("/", async (req, res) => {
             fit: "inside",
             withoutEnlargement: true
         }).webp({
-            quality: CONFIG.QUALITY||80,
-            lossless: CONFIG.LOSSLESS||false,
-            nearLossless: CONFIG.NEAR_LOSSLESS||true,
-            smartSubsample: CONFIG.SMART_SUBSAMPLE||true
+            quality: quality,
+            lossless: lossless,
+            nearLossless:nearLossless,
+            smartSubsample: smartSubsample,
+            alphaQuality:alphaQuality,
+            effort:effort
         }).toBuffer();
         console.log("Done convert to WEBP",originUrl);
 
@@ -181,6 +190,19 @@ app.get("/", async (req, res) => {
     res.set("Content-Type", "image/webp");
     res.set("Cache-Control", "max-age=31536000"); //  cache for 1 year, we actually just want something big here. Upstream will handle the real cache   
     outStream.pipe(res);
+}
+
+app.get("/", async (req, res) => {
+    await handle(req,res);
+});
+
+app.post("/", async (req, res) => {
+    // if json
+    let body={};
+    if(req.headers["content-type"]=="application/json"){
+        body=req.body;
+    }
+    await handle(req,res,body);
 });
 
 
