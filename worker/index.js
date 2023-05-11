@@ -29,15 +29,28 @@ async function fetchOptimizedImage(request,env){
 	const IMAGE_CACHE=env.IMAGE_CACHE;
 	const IMAGE_OPTIMIZER=env.IMAGE_OPTIMIZER;	
 
-	const url=request.url;
-	const urlHash=await hash(url);
+	const url=request.url.toString();
 
-	const cache = await caches.open('optimgs:cache');
-	const cachedResponse=await cache.match(request);
-	if(cachedResponse){ // check if request is in cache
-		console.log("Response already in cache");
-		return cachedResponse;
+	const etag=request.headers.get("If-None-Match");
+	const params={};
+	const searchParams=new URL(request.url).searchParams;
+	if(searchParams){
+		for(const [k,v] of searchParams) params[k]=v;
 	}
+
+	console.log(url);
+
+	let optimizerUrl=url;
+	if(optimizerUrl.indexOf("?")==-1) optimizerUrl+="?";
+	else optimizerUrl+="&";
+	optimizerUrl+="noCache";
+	optimizerUrl=IMAGE_OPTIMIZER+encodeURIComponent(optimizerUrl);
+	for(const [k,v] of Object.entries(params)) optimizerUrl+=`&${k}=${v}`;
+	const cacheRequest=new Request(optimizerUrl);        
+	const optimizedHash=await hash(optimizerUrl);
+	const cache = await caches.open('optimgs:cache');
+
+
 
 	const transform=(response)=>{
 		const { readable, writable } = new TransformStream();
@@ -46,38 +59,63 @@ async function fetchOptimizedImage(request,env){
         const proxiedResp=new Response(readable, response);
         proxiedResp.headers.set("Cache-Control","public, max-age=31536000, immutable");
 		proxiedResp.headers.set("Content-Type","image/webp");
+		proxiedResp.headers.set("etag",optimizedHash);
 		return proxiedResp;
 		
 	}
-	
-	const cacheUrl=IMAGE_CACHE+urlHash+".webp";
-	console.log("Fetch optimized image",cacheUrl);
-	const cacheRequest=new Request(cacheUrl);
-	const cacheResponse=await fetch(cacheRequest);
-	
-	if(cacheResponse.status<400){	 
-		console.log("Optimized image found!");
-		const proxiedResp=transform(cacheResponse);
 
-		console.log("Cache response");
-		await cache.put(request,proxiedResp.clone());
-
-		return proxiedResp;
+	// local cache
+	if(etag==optimizedHash){
+		return new Response("", {
+			status:304,
+			headers: {
+				'Cache-Control': 'public, max-age=0, must-revalidate'
+			}
+		});
 	}
 
-	// if image not cached, trigger optimizer
-	const optimizedUrl=IMAGE_OPTIMIZER+encodeURIComponent(url+"?noCache");
-	console.log("Optimized image not found. Invoke optimizer",optimizedUrl,cacheResponse.status,cacheResponse.statusText);
-	const optimizerRequest=new Request(optimizedUrl);
-	const optimizerResponse= await fetch(optimizerRequest);
-	if(optimizerResponse.status<400){	 
-		console.log("Received optimized image from optimizer");
-		const proxiedResp=transform(optimizerResponse);
 
-		console.log("Cache response");
-		await cache.put(request,proxiedResp.clone());
+	// edge cache
+	{
+		const cachedResponse=await cache.match(cacheRequest);
+		if(cachedResponse){ // check if request is in cache
+			console.log("Response already in cache");
+			return transform(cachedResponse);
+		}
+	}
+	
+	// Object cache
+	{
+		const cacheUrl=IMAGE_CACHE+optimizedHash+".webp";
+		console.log("Fetch optimized image",cacheUrl);
+		const optimizedCacheRequest=new Request(cacheUrl);
+		const optimizedCacheResponse=await fetch(optimizedCacheRequest);
+		
+		if(optimizedCacheResponse.status<400){	 
+			console.log("Optimized image found!");
+			const proxiedResp=transform(optimizedCacheResponse);
 
-		return proxiedResp;
+			console.log("Cache response");
+			await cache.put(cacheRequest,proxiedResp.clone());
+
+			return proxiedResp;
+		}
+	}
+
+	// Optimizer
+	{
+		console.log("Optimized image not found. Invoke optimizer",optimizerUrl);
+		const optimizerRequest=new Request(optimizerUrl);
+		const optimizerResponse= await fetch(optimizerRequest);
+		if(optimizerResponse.status<400){	 
+			console.log("Received optimized image from optimizer");
+			const proxiedResp=transform(optimizerResponse);
+
+			console.log("Cache response");
+			await cache.put(cacheRequest,proxiedResp.clone());
+
+			return proxiedResp;
+		}
 	}
 
 	return undefined;
@@ -87,7 +125,7 @@ async function fetchOptimizedImage(request,env){
 export default {
 	async fetch(request, env, ctx) {
 		if(request.url.endsWith("/acclr")){
-			return new Response("1.0", {
+			return new Response("2.0", {
 				status: 200,
 				statusText: "OK",
 				headers: {
@@ -98,16 +136,15 @@ export default {
 		}
 
 		
-		const searchParams = request.url.split("?")[1];
-		const noCache = searchParams&&searchParams.indexOf("noCache") > -1;
+		const searchParams=new URL(request.url).searchParams;
+
+		const noCache = searchParams&&searchParams.has("noCache");
 		console.log("Cache enabled:",!noCache);
  		let response;
 
-		if(isImage(request)){
+		if(!noCache&&isImage(request)){
 			console.log("Is image");
-			if (!noCache) {
-				response = await fetchOptimizedImage(request,env);
-			}
+			response = await fetchOptimizedImage(request,env);
 		}
 		
 		if(!response){
