@@ -62,6 +62,7 @@ const app = Express();
 app.use(Express.json());
 
 async function setCache(hash,buffer){
+    if(!CONFIG.S3)return;
     try{
         const [bucket,minio]=getMinio();
         await minio.putObject(bucket,hash+".webp", buffer);       
@@ -110,9 +111,9 @@ async function getCache(hash){
 
 
 async function handle(req,res,body={}){
-    const searchParams=new URL(req.url,`https://${req.headers.host}`).searchParams;
-    const originUrl = searchParams.get("i");
-    
+    const fullUrl=new URL(req.url,`https://${req.headers.host}`);
+    const originUrl = body.i;
+
     if(!originUrl){
         res.status(400).send("Missing url");
         return;
@@ -129,15 +130,28 @@ async function handle(req,res,body={}){
         req.headers["x-real-ip"] ||
         req.socket.remoteAddress;
 
-    const cleanUrl=new URL(originUrl);
-    cleanUrl.searchParams.delete("noCache");
-    console.log("Hash",cleanUrl.toString());
-    
-    const urlHash=Crypto.createHash("sha256").update(cleanUrl.toString()).digest("hex");
+    const optimizedHash=Crypto.createHash("sha256").update(fullUrl.toString()).digest("hex");
+    console.log("Hash",fullUrl.toString(),"=",optimizedHash);
 
-    // check if already cached
-    let outStream=await getCache(urlHash);
 
+    // local cache
+    {
+        const etag=req.headers["if-none-match"];
+        if(etag==optimizedHash){
+            res.status(304).send();
+            return;
+        }
+    }
+
+    let outStream;
+
+    // remote cache
+    {
+        outStream=await getCache(optimizedHash);
+    }    
+
+
+    // generate
     if(!outStream){        
         console.log("Fetch",originUrl);
         const response = await fetch(originUrl,{
@@ -208,7 +222,7 @@ async function handle(req,res,body={}){
 
         // cache
         console.log("Cache",originUrl);
-        setCache(urlHash,image); 
+        setCache(optimizedHash,image); 
         console.log("Done cache",originUrl);
         
         // create stream
@@ -219,19 +233,23 @@ async function handle(req,res,body={}){
     console.log("Send converted",originUrl);
     res.set("Content-Type", "image/webp");
     res.set("Cache-Control", "max-age=31536000"); //  cache for 1 year, we actually just want something big here. Upstream will handle the real cache   
+    res.set("ETag", optimizedHash);
     outStream.pipe(res);
 }
 
-app.get("/", async (req, res) => {
-    await handle(req,res);
-});
 
-app.post("/", async (req, res) => {
-    // if json
+app.get("/", async (req, res) => {
+    const searchParams=new URL(req.url,`https://${req.headers.host}`).searchParams;
     let body={};
-    if(req.headers["content-type"]=="application/json"){
-        body=req.body;
+    // if(req.headers["content-type"]=="application/json"&&req.body){
+    //     body=req.body;
+    // }
+    for(const [k,v] of searchParams){
+        if(!body[k]){
+            body[k]=v;
+        }
     }
+    // console.log(body);
     await handle(req,res,body);
 });
 
