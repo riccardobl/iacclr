@@ -8,6 +8,6 @@
     "MAX_WIDTH": 1920,
     "MAX_HEIGHT": 1920,
     "URL_WHITELIST":[
-
+        ".+"
     ]
 }
