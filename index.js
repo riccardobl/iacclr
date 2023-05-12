@@ -5,6 +5,7 @@ import Fs from "fs";
 import Minio from "minio";
 import {Readable} from "stream";
 import fetch from "node-fetch";
+Sharp.concurrency(0);
 
 let CONFIG={};
 let URL_WHITELIST=[]; // whitelist of regex
@@ -181,7 +182,7 @@ async function handle(req,res,body={}){
             fit: "inside",
             withoutEnlargement: true
         });
-
+        
         if(alphaQuality==-1){
             const metadata=await image.metadata();
             
@@ -241,16 +242,12 @@ async function handle(req,res,body={}){
 app.get("/", async (req, res) => {
     const searchParams=new URL(req.url,`https://${req.headers.host}`).searchParams;
     let body={};
-    // if(req.headers["content-type"]=="application/json"&&req.body){
-    //     body=req.body;
-    // }
     for(const [k,v] of searchParams){
         if(!body[k]){
             body[k]=v;
         }
     }
-    // console.log(body);
-    await handle(req,res,body);
+    handle(req,res,body);
 });
 
 
