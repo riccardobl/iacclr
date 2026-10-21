@@ -2,7 +2,7 @@ import Express from "express";
 import Sharp from "sharp";
 import Crypto from "crypto";
 import Fs from "fs";
-import Minio from "minio";
+import * as Minio from "minio";
 import {Readable} from "stream";
 import fetch from "node-fetch";
 Sharp.concurrency(0);
@@ -31,7 +31,15 @@ try{
             }
         }
     }
-    URL_WHITELIST=CONFIG.URL_WHITELIST.map(regex=>new RegExp(regex));    
+    URL_WHITELIST=CONFIG.URL_WHITELIST.map(pattern=>{
+        const authority=pattern.match(/^https(?:\?)?:\/\/([^/]+)\//) || pattern.match(/^http:\/\/([^/]+)\//);
+        if(!authority)throw new Error("URL_WHITELIST must contain complete HTTP(S) URLs with literal hostnames");
+        const hostname=authority[1].replace(/\\([.\-])/g,"$1").toLowerCase();
+        if(!/^[a-z0-9.-]+(?::[0-9]{1,5})?$/.test(hostname) || hostname.startsWith(".")){
+            throw new Error("URL_WHITELIST contains an invalid hostname");
+        }
+        return {hostname, regex:new RegExp(`^(?:${pattern})$`)};
+    });
 }catch(err){
     console.error(err);
     process.exit(1);
@@ -60,7 +68,25 @@ function getMinio(){
 
 
 const app = Express();
-app.use(Express.json());
+
+function allowedOrigin(value){
+    let url;
+    try{url=new URL(value);}catch{return false;}
+    if(!["http:","https:"].includes(url.protocol)||url.username||url.password)return false;
+    return URL_WHITELIST.some(({hostname,regex})=>url.host.toLowerCase()===hostname&&regex.test(value));
+}
+
+async function fetchAllowedImage(url,headers){
+    if(!allowedOrigin(url))throw new Error("Image origin is not allowed");
+    const response=await fetch(url,{
+        headers,
+        redirect:"manual",
+        signal:AbortSignal.timeout(30_000),
+        size:10*1024*1024
+    });
+    if(!response.ok)throw new Error(`Image origin returned ${response.status}`);
+    return response;
+}
 
 async function setCache(hash,buffer){
     if(!CONFIG.S3)return;
@@ -120,7 +146,7 @@ async function handle(req,res,body={}){
         return;
     }
 
-    if(!URL_WHITELIST.some(regex=>regex.test(originUrl))){ // we don't want to open this to the whole internet
+    if(!allowedOrigin(originUrl)){
         res.status(403).send("Forbidden");
         return;
     }
@@ -132,7 +158,7 @@ async function handle(req,res,body={}){
         req.socket.remoteAddress;
 
     const optimizedHash=Crypto.createHash("sha256").update(fullUrl.toString()).digest("hex");
-    console.log("Hash",fullUrl.toString(),"=",optimizedHash);
+    console.log("Hash",optimizedHash);
 
 
     // local cache
@@ -154,17 +180,12 @@ async function handle(req,res,body={}){
 
     // generate
     if(!outStream){        
-        console.log("Fetch",originUrl);
-        const response = await fetch(originUrl,{
-            headers:{
-                "User-Agent": req.headers["user-agent"],
-                "X-Forwarded-For": ip // not a security feature, this is just to make the origin server know the advertised ip of the client            
-            }
+        const response = await fetchAllowedImage(originUrl,{
+            "User-Agent": req.headers["user-agent"],
+            "X-Forwarded-For": ip
         });
-        console.log("Done fetch",originUrl);
 
         // convert
-        console.log("Convert to WEBP",originUrl);
         const arrayBuffer = await response.arrayBuffer();
         const buffer=Buffer.from(arrayBuffer);
         const maxWidth=parseInt(body.maxWidth||CONFIG.MAX_WIDTH||1920);
@@ -219,19 +240,15 @@ async function handle(req,res,body={}){
             alphaQuality:100,
             effort:effort
         }).toBuffer();
-        console.log("Done convert to WEBP",originUrl);
 
         // cache
-        console.log("Cache",originUrl);
         setCache(optimizedHash,image); 
-        console.log("Done cache",originUrl);
         
         // create stream
-        outStream= Readable.from(Buffer.from(image));
+        outStream= Readable.from([image]);
     }
 
     // send
-    console.log("Send converted",originUrl);
     res.set("Content-Type", "image/webp");
     res.set("Cache-Control", "max-age=31536000"); //  cache for 1 year, we actually just want something big here. Upstream will handle the real cache   
     res.set("ETag", optimizedHash);
@@ -247,10 +264,15 @@ app.get("/", async (req, res) => {
             body[k]=v;
         }
     }
-    handle(req,res,body);
+    handle(req,res,body).catch(err=>{
+        console.error("Image conversion failed:",err);
+        if(!res.headersSent)res.status(502).send("Image conversion failed");
+        else res.destroy();
+    });
 });
 
 
-app.listen(8080, () => {
-    console.log("Server started on port 8080");
+const port=Number(process.env.PORT||8080);
+app.listen(port, () => {
+    console.log("Server started on port "+port);
 });

@@ -4,15 +4,15 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "node --test tests/*.test.mjs"
   },
   "author": "Riccardo Balbo",
   "type": "module",
   "license": "BSD3",
   "dependencies": {
-    "express": "^4.18.2",
-    "minio": "^7.0.32",
-    "node-fetch": "^3.3.0",
-    "sharp": "^0.31.3"
+    "express": "4.22.3",
+    "minio": "8.0.7",
+    "node-fetch": "3.3.2",
+    "sharp": "0.35.5"
   }
 }
